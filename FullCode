@@ -1,0 +1,444 @@
+/*--------------------- Code for LED Control --------------------------------------------------------- */
+#include <FastLED.h>                         // includes LED library for NeoPixels
+
+#define DATA_PIN 9                           // defines the pin used to give instructions to LEDs from Arduino
+
+//defines area of play
+const int GAME_AREA_X = 5;
+const int GAME_AREA_Y = 4;
+
+// defines NUM_LEDS as the number of leds total
+#define NUM_LEDS (GAME_AREA_X * GAME_AREA_Y)
+
+CRGB leds[NUM_LEDS];                        // Set up block of memory to store LEDs data; LED array
+unsigned long previousTime = 0;             // used to store time passed, initialized to zero
+unsigned long currentTime;                  // used to store current time to compare to time passed
+unsigned long Interval = 1000;               // 'SPEED OF GAME' --> e.g. amount of time between executions in milliseconds
+
+int XY0( int x, int y);                      // function to convert (x,y) coordinates into led spot; input is x-y coordinates, output is LED number corresponding of such coordinates
+/*---------------------------------------------------------------------------------------------------- */
+/*--------------------- Code for Snake Game ---------------------------------------------------------- */
+#define SNAKE_HEAD_COLOR Green;                   // defines the color of the HEAD 
+#define FRUIT_COLOR Purple;                  // defines the color of the fruit
+#define SNAKE_BODY_COLOR Yellow;             // defines the color of the BODY
+
+// coordinates of head
+int HEAD_POSITION_X, HEAD_POSITION_Y;
+
+// coordinates of fruit
+int fruitX, fruitY;
+
+// arrays for snake body elements AND values
+int SNAKE_BODY_X[100];
+int SNAKE_BODY_Y[100];
+
+int SNAKE_BODY_LENGTH;                      // variable for snake body length
+
+// directions available for snake head
+enum eDirection {STOP = 0, NORTH, SOUTH, EAST, WEST};
+
+eDirection dir;                              // place holder for direction value
+bool gameOver;                               // Game over Value Holder
+int score;                                   // place holder for score value
+
+/*---------------------------------------------------------------------------------------------------- */
+/*--------------------- Code for NES Controller------------------------------------------------------- */
+int nesData                = 2;  //Yellow    // Input data pin for NES controller
+int nesClock               = 3;  //Green     // Output clock pin for NES controller
+int nesLatch               = 4;  //Purple    // Output latch pin for NES controller
+
+const int A_BUTTON         = 0;              // defines input pin for UP direction
+const int B_BUTTON         = 1;              // defines input pin for DOWN direction
+const int SELECT_BUTTON    = 2;              // defines input for SELECT function
+const int START_BUTTON     = 3;              // defines input for START function
+const int UP_BUTTON        = 4;              // defines input for NORTH direction
+const int DOWN_BUTTON      = 5;              // defines input for SOUTH direction
+const int LEFT_BUTTON      = 6;              // defines input pin for WEST direction
+const int RIGHT_BUTTON     = 7;              // defines input pin for EAST direction
+
+byte nesRegister = 0;                        // variable to hold current button states
+
+/*---------------------------------------------------------------------------------------------------- */
+/*-------------------------Initialize Functions------------------------------------------------------- */
+void StartGame();
+void Input();
+void Logic();
+void Draw();
+byte readNesController();
+void makeFruit();
+/*---------------------------------------------------------------------------------------------------- */
+
+// FUNCTION TO SET UP GAME
+void setup() {
+
+  // setup FastLED to work with NEOPIXELs
+  FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);
+
+  // initialize serial port speed for serial terminal
+  Serial.begin(9600);
+
+  // set appropriate pins to inputs FROM NES CONTROLLER
+  pinMode(nesData, INPUT);
+
+  // set appropriate pins to outputs FOR NES CONTROLLER
+  pinMode(nesClock, OUTPUT);
+  pinMode(nesLatch, OUTPUT);
+
+  // set initial states FOR NES CONTROLLER
+  digitalWrite(nesClock, LOW);
+  digitalWrite(nesLatch, LOW);
+
+  gameOver = true;                              // game over until game starts
+  score = 0;
+  dir = STOP;
+
+  // initialize cube to ALL LEDS off
+  for (int i = 0; i < NUM_LEDS; i++)
+  {
+    leds[i] = CRGB::Blue;
+    FastLED.show();
+  }
+}
+
+// FUNCTION LOOPING ALWAYS READING CONTROLLER TO BEGIN ONCE START BUTTON IS PRESSED
+void loop()
+{
+  StartGame();
+  while (!gameOver)
+  {
+    currentTime = millis();                       // returns the amount of time since the arduino started
+    Draw();
+    Input();
+    if (currentTime - previousTime >= Interval)
+    {
+      previousTime = currentTime;
+      Logic();
+    }
+  }
+}
+
+
+// FUNCTION TO START THE GAME
+void StartGame()
+{
+  nesRegister = readNesController();              // function returns states of Buttons from NES controller
+  delay(50);                                      // slight delay to get info
+
+  if (bitRead(nesRegister, SELECT_BUTTON) == 0)
+  {
+    gameOver = true;
+    // initialize cube to ALL LEDS off
+    for (int i = 0; i < NUM_LEDS; i++)
+    {
+      leds[i] = CRGB::Black;
+    }
+    FastLED.show();
+    Serial.println("Pressed SELECT BUTTON");
+  }
+
+  if (bitRead(nesRegister, START_BUTTON) == 0)
+  {
+    gameOver = false;
+    HEAD_POSITION_X = 2;                          // SET x-pos of head at START button press
+    HEAD_POSITION_Y = 1;                          // SET y-pos of head at START button press
+    score = 0;                                    // SET score back to zero
+    dir = STOP;                                   // SET initial direction to STOP
+    SNAKE_BODY_LENGTH = 0;                        // SET initial length of snake to zero
+    leds[XY0(HEAD_POSITION_X, HEAD_POSITION_Y)] = CRGB::SNAKE_HEAD_COLOR;
+    makeFruit();
+    leds[XY0(fruitX, fruitY)] = CRGB::FRUIT_COLOR;
+    Serial.println("Pressed START BUTTON");
+  }
+}
+
+void Draw()
+{
+  for (int i = 0; i < GAME_AREA_X; i++)
+  {
+    for (int j = 0; j < GAME_AREA_Y; j++)
+    {
+      if ( i == HEAD_POSITION_X && j == HEAD_POSITION_Y)
+      {
+        leds[XY0(HEAD_POSITION_X, HEAD_POSITION_Y)] = CRGB::SNAKE_HEAD_COLOR;         // sets LED for HEAD
+      }
+      else if ( i == fruitX && j == fruitY)
+      {
+        leds[XY0(fruitX, fruitY)] = CRGB::FRUIT_COLOR;                                // sets LED for Fruit
+      }
+      else
+      {
+        for (int k = 0; k < SNAKE_BODY_LENGTH; k++)
+        {
+          if (i == SNAKE_BODY_X[k] && j == SNAKE_BODY_Y[k])
+          {
+            leds[XY0(SNAKE_BODY_X[k], SNAKE_BODY_Y[k])] = CRGB::SNAKE_BODY_COLOR;     // sets LEDs for Snake Body
+          }
+        }
+      }
+    }
+  }
+
+  FastLED.show();
+
+  for (int ioff = 0; ioff < GAME_AREA_X; ioff++)
+  {
+    for (int joff = 0; joff < GAME_AREA_Y; joff++)
+    {
+      if (ioff == HEAD_POSITION_X && joff == HEAD_POSITION_Y && dir != 0)
+      {
+        leds[XY0(HEAD_POSITION_X, HEAD_POSITION_Y)] = CRGB::Black;                  // sets LED off for HEAD
+      }
+      for (int k = 0; k < SNAKE_BODY_LENGTH; k++)
+      {
+        leds[XY0(SNAKE_BODY_X[k], SNAKE_BODY_Y[k])] = CRGB::Black;                   // sets LEDs off for Snake Body
+      }
+    }
+  }
+}
+
+// FUNCTION TO SET INPUT AS SPECIFIC INSTRUCTION
+void Input()
+{
+  nesRegister = readNesController();              // function returns states of Buttons from NES controller
+  delay(10);                                      // slight delay to get info
+
+  Serial.println("Read Input");
+  if (bitRead(nesRegister, SELECT_BUTTON) == 0)
+  {
+    gameOver = true;
+  }
+  if (bitRead(nesRegister, START_BUTTON) == 0)
+  {
+    gameOver = false;
+  }
+  if (bitRead(nesRegister, UP_BUTTON) == 0)
+  {
+    dir = NORTH;
+  }
+  if (bitRead(nesRegister, DOWN_BUTTON) == 0)
+  {
+    dir = SOUTH;
+  }
+  if (bitRead(nesRegister, LEFT_BUTTON) == 0)
+  {
+    dir = WEST;
+  }
+  if (bitRead(nesRegister, RIGHT_BUTTON) == 0)
+  {
+    dir = EAST;
+  }
+}
+
+// FUNCTION TO PROCESS INPUTS
+void Logic()
+{
+  int prevX = SNAKE_BODY_X[0];
+  int prevY = SNAKE_BODY_Y[0];
+  int prev2X, prev2Y;
+  SNAKE_BODY_X[0] = HEAD_POSITION_X;
+  SNAKE_BODY_Y[0] = HEAD_POSITION_Y;
+
+  for (int i = 1; i < SNAKE_BODY_LENGTH; i++)
+  {
+    prev2X = SNAKE_BODY_X[i];
+    prev2Y = SNAKE_BODY_Y[i];
+    SNAKE_BODY_X[i] = prevX;
+    SNAKE_BODY_Y[i] = prevY;
+    prevX = prev2X;
+    prevY = prev2Y;
+  }
+
+  switch (dir)
+  {
+    case NORTH:
+      Serial.println("Go Up");
+      HEAD_POSITION_Y++;
+      if (HEAD_POSITION_Y > (GAME_AREA_Y - 1))
+      {
+        HEAD_POSITION_Y = 0;
+      }
+      break;
+
+    case SOUTH:
+      Serial.println("Go Down");
+      HEAD_POSITION_Y--;
+      if (HEAD_POSITION_Y < 0)
+      {
+        HEAD_POSITION_Y = GAME_AREA_Y - 1;
+      }
+      break;
+
+    case EAST:
+      Serial.println("Go Right");
+      HEAD_POSITION_X++;
+      if (HEAD_POSITION_X > (GAME_AREA_X - 1))
+      {
+        HEAD_POSITION_X = 0;
+      }
+      break;
+
+    case WEST:
+      Serial.println("Go Left");
+      HEAD_POSITION_X--;
+      if (HEAD_POSITION_X < 0)
+      {
+        HEAD_POSITION_X = GAME_AREA_X - 1;
+      }
+      break;
+  }
+
+  // CHECKS IF SNAKE TOUCHES ITSELF
+  for ( int i = 0; i < SNAKE_BODY_LENGTH; i++) // if snake hits body, game over.
+  {
+    if (SNAKE_BODY_X[i] == HEAD_POSITION_X && SNAKE_BODY_Y[i] == HEAD_POSITION_Y)
+    {
+      // initialize cube to ALL LEDS off
+      for (int i = 0; i < NUM_LEDS; i++)
+      {
+        leds[i] = CRGB::Red;
+        FastLED.show();
+      }
+      gameOver = true;
+      Serial.println("Game Over");
+    }
+  }
+
+  // CHECKS IF HEAD EATS FRUIT
+  if (HEAD_POSITION_X == fruitX && HEAD_POSITION_Y == fruitY)   // check if head gets fruit
+  {
+    Serial.println("Ate Fruit");
+    score++;                                                    // increase score by 1
+    SNAKE_BODY_LENGTH++;                                        // increase SNAKE body length by 1
+    makeFruit();                                                // generate new fruit coordinates
+    leds[XY0(fruitX, fruitY)] = CRGB::FRUIT_COLOR;              // set LED for new fruit
+  }
+}
+
+// FUNCTION TO READ NES CONTROLLER INPUTS *** PART of Input()***
+byte readNesController()
+{
+  int tempData = 255;                               // sets tempData variable to all 1's e.g. 1 1 1 1 1 1 1 1; 0 value means button pressed, 1 value means button NOT pressed
+
+  // pulse nesLatch to grab what is on data pins
+  digitalWrite(nesLatch, HIGH);
+  digitalWrite(nesLatch, LOW);
+
+  // Check State of Button A
+  if (digitalRead(nesData) == LOW)
+  {
+    bitClear(tempData, A_BUTTON);
+  }
+
+  // clock the next bit on data
+  digitalWrite(nesClock, HIGH);
+  digitalWrite(nesClock, LOW);
+  // Check State of Button B
+  if (digitalRead(nesData) == LOW)
+  {
+    bitClear(tempData, B_BUTTON);
+  }
+
+  // clock the next bit on data
+  digitalWrite(nesClock, HIGH);
+  digitalWrite(nesClock, LOW);
+  // Check State of Select Button
+  if (digitalRead(nesData) == LOW)
+  {
+    bitClear(tempData, SELECT_BUTTON);
+  }
+
+  // clock the next bit on data
+  digitalWrite(nesClock, HIGH);
+  digitalWrite(nesClock, LOW);
+  // Check State of Start Button
+  if (digitalRead(nesData) == LOW)
+  {
+    bitClear(tempData, START_BUTTON);
+  }
+
+  // clock the next bit on data
+  digitalWrite(nesClock, HIGH);
+  digitalWrite(nesClock, LOW);
+  // Check State of Up Button
+  if (digitalRead(nesData) == LOW)
+  {
+    bitClear(tempData, UP_BUTTON);
+  }
+
+  // clock the next bit on data
+  digitalWrite(nesClock, HIGH);
+  digitalWrite(nesClock, LOW);
+  // Check State of Down Button
+  if (digitalRead(nesData) == LOW)
+  {
+    bitClear(tempData, DOWN_BUTTON);
+  }
+
+  // clock the next bit on data
+  digitalWrite(nesClock, HIGH);
+  digitalWrite(nesClock, LOW);
+  // Check State of Left Button
+  if (digitalRead(nesData) == LOW)
+  {
+    bitClear(tempData, LEFT_BUTTON);
+  }
+
+  // clock the next bit on data
+  digitalWrite(nesClock, HIGH);
+  digitalWrite(nesClock, LOW);
+  // Check State of Right Button
+  if (digitalRead(nesData) == LOW)
+  {
+    bitClear(tempData, RIGHT_BUTTON);
+  }
+  return tempData;
+}
+
+// FUNCTION TO GENERATE NEW FRUIT COORDINATES***PART of Draw()***
+void makeFruit()
+{
+  int x, y;
+  x = random(GAME_AREA_X);
+  y = random(GAME_AREA_Y);
+  while (!fruitSpaceAvailable(x, y))           // while there is no space available for fruit,
+  {                                            // This loop will keep generating new x,y coordinates until space available
+    x = random(GAME_AREA_X);
+    y = random(GAME_AREA_Y);
+  }
+  fruitX = x;
+  fruitY = y;
+}
+
+// FUNCTION TO CHECK IF FRUIT IS ALREADY PART OF SNAKE ***PART of makeFruit()***
+boolean fruitSpaceAvailable( int a, int b)
+{
+  for (int i = 0; i < GAME_AREA_X; i++)
+  {
+    for (int j = 0; j < GAME_AREA_Y; j++)
+    {
+      if (a == HEAD_POSITION_X && b == HEAD_POSITION_Y)
+      {
+        return false;                         // returns false because x,y coordinate for fruit is not available
+      }                                       // e.g. occupied by part of the snake body
+      else if (a == SNAKE_BODY_X[i] && b == SNAKE_BODY_Y[j])
+      {
+        return false;                         // returns false because x,y coordinate for fruit is not available
+      }                                       // e.g. occupied by the head      {
+    }
+  }
+  return true;
+}
+
+int XY0 (int x, int y) // !!!!!VERIFY LED NUMBERS CORRESPOND TO COORDINATES CORRECTLY !!!!!
+{
+  const int XYTable[] = {
+    0,   1,   2,   3,   4,
+    9,   8,   7,   6,   5,
+    10,  11,  12,  13,  14,
+    19,  18,  17,  16,  15
+  };
+
+  int i = (y * GAME_AREA_X) + x;
+  int ledNumber = XYTable[i];
+  return ledNumber;
+}
